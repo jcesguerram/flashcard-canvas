@@ -1,0 +1,54 @@
+/* Flashcard Canvas */
+
+/* A card's title folds and unfolds it. */
+.canvas-node.fc-card .callout-title {
+	cursor: pointer;
+}
+
+/* Study mode: every answer hidden until its card is revealed, whatever the card's saved folding. */
+.fc-study .canvas-node.fc-card {
+	cursor: pointer;
+}
+
+.fc-study .canvas-node.fc-card:not(.fc-revealed) .callout-content {
+	display: none !important;
+}
+
+.fc-study .canvas-node.fc-card.fc-revealed .callout-content {
+	display: block !important;
+}
+
+.fc-study .canvas-node.fc-card:not(.fc-revealed) .callout-fold .svg-icon {
+	transform: rotate(-90deg);
+}
+
+.fc-study .canvas-node.fc-card.fc-revealed .callout-fold .svg-icon {
+	transform: none;
+}
+
+.fc-study-badge {
+	position: absolute;
+	top: var(--size-4-3);
+	left: 50%;
+	transform: translateX(-50%);
+	z-index: var(--layer-popover);
+	padding: var(--size-4-1) var(--size-4-3);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-m);
+	background-color: var(--background-primary);
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+	font-variant-numeric: tabular-nums;
+	pointer-events: none;
+	white-space: nowrap;
+}
+
+/* Canvas controls */
+.fc-controls.fc-hidden,
+.fc-controls .fc-hidden {
+	display: none;
+}
+
+.fc-controls .canvas-control-item.is-active {
+	color: var(--interactive-accent);
+}

@@ -1,0 +1,10 @@
+{
+	"id": "flashcard-canvas",
+	"name": "Flashcard Canvas",
+	"version": "0.1.0",
+	"minAppVersion": "1.7.2",
+	"description": "Turns canvas cards into foldable callout flashcards that resize to fit, arrange themselves as a mindmap, and can be studied with the answers hidden.",
+	"author": "Juan Carlos Esguerra",
+	"isDesktopOnly": false,
+	"fundingUrl": "https://ko-fi.com/jcesguerram"
+}
