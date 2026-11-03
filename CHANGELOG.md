@@ -2,6 +2,18 @@
 
 All notable changes to Flashcard Canvas are recorded here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## 0.2.0 — 2026-11-03
+
+A general mindmap plugin now, with callouts as a mode.
+
+### Changed
+
+- **The mindmap works on every canvas and every kind of box.** Fitting the height (text boxes), Tab and Enter (from any box but a group), and Tidy layout and Keep tidy (all boxes but groups and what's inside them) no longer need callout cards.
+- **Callout mode is set per canvas**, with a new button in the canvas controls and a command. New boxes start as a callout card, title clicks fold the card, and fold all, unfold all and study mode are there only in callout mode. Outside it, new boxes are empty text boxes, as in a plain canvas.
+- **Keep tidy starts off in canvases that already have boxes**, and on (by default) in new ones, so the plugin never rearranges an existing canvas by itself.
+- **Boxes are fitted only after their text or width changes**, so opening a canvas doesn't resize boxes you sized by hand.
+- Settings from 0.1.0 carry over: canvases with a Keep tidy setting keep it and get callout mode.
+
 ## 0.1.0 — 2026-10-27
 
 First version, for testing.

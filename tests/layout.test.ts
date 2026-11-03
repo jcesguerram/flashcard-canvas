@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { buildTree, childSpot, GAPS, sidesFor, studyOrder, tidy, type Box, type Link } from '../src/layout';
+import { arrangeable, buildTree, childSpot, GAPS, sidesFor, studyOrder, tidy, type Box, type Link } from '../src/layout';
 
 let failed = 0;
 function test(name: string, fn: () => void) {
@@ -89,6 +89,18 @@ test('a new child goes right of its parent, or below its last child', () => {
 	const parent = box('p', 0, 0, 60);
 	assert.deepEqual(childSpot(parent, []), { x: 260 + GAPS.col, y: 0 });
 	assert.deepEqual(childSpot(parent, [box('a', 340, -40, 50), box('b', 340, 30, 70)]), { x: 340, y: 30 + 70 + GAPS.row });
+});
+
+test('groups, and boxes entirely inside a group, are left out of the layout', () => {
+	const shapes = [
+		{ ...box('g', 0, 0, 400, 600), group: true },
+		{ ...box('in', 20, 20, 60, 200), group: false },
+		{ ...box('edge', 500, 20, 60, 200), group: false },
+		{ ...box('half', 100, 370, 60, 200), group: false },
+		{ ...box('free', 1000, 0), group: false },
+	];
+	assert.deepEqual(arrangeable(shapes).map((b) => b.id), ['edge', 'half', 'free']);
+	assert.deepEqual(arrangeable([{ ...box('a', 0, 0), group: false }]), [box('a', 0, 0)]);
 });
 
 if (failed) {

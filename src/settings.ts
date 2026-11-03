@@ -1,7 +1,17 @@
 import { App, PluginSettingTab, Setting } from 'obsidian';
 import type FlashcardCanvasPlugin from './main';
 
+/** What is set for one canvas file. Missing means not decided yet. */
+export interface CanvasPrefs {
+	callouts?: boolean;
+	keepTidy?: boolean;
+}
+
 export interface Settings {
+	/** Tab adds a child box and Enter a sibling to the selected box. */
+	keyboard: boolean;
+	/** Keep tidy starts on in new (empty) canvases. Canvases that already have boxes start with it off. */
+	keepTidyNew: boolean;
 	/** Callout type of new cards, e.g. "pregunta" for > [!pregunta]+ */
 	calloutType: string;
 	/** Placeholder text for the question (the callout's title). */
@@ -10,25 +20,18 @@ export interface Settings {
 	answer: string;
 	/** New cards start open (+) or folded (-). */
 	startOpen: boolean;
-	/** New boxes on any canvas start with the card template. */
-	fillNewBoxes: boolean;
-	/** Tab adds a child card and Enter a sibling to the selected card. */
-	keyboard: boolean;
-	/** Keep tidy is on for canvases you haven't set it for. */
-	keepTidyDefault: boolean;
-	/** Keep tidy per canvas file, where you changed it. */
-	keepTidy: Record<string, boolean>;
+	/** Callout mode and Keep tidy for each canvas, by file path. */
+	canvases: Record<string, CanvasPrefs>;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
+	keyboard: true,
+	keepTidyNew: true,
 	calloutType: 'pregunta',
 	question: 'p',
 	answer: 'a',
 	startOpen: true,
-	fillNewBoxes: true,
-	keyboard: true,
-	keepTidyDefault: true,
-	keepTidy: {},
+	canvases: {},
 };
 
 export class FlashcardCanvasSettingTab extends PluginSettingTab {
@@ -42,17 +45,27 @@ export class FlashcardCanvasSettingTab extends PluginSettingTab {
 		const s = this.plugin.settings;
 		const save = () => { void this.plugin.saveSettings(); };
 
-		new Setting(containerEl).setName('New cards').setHeading();
+		new Setting(containerEl).setName('Mindmap').setHeading();
 
 		new Setting(containerEl)
-			.setName('Fill new boxes with a card')
-			.setDesc('Every new text box on a canvas starts as a card. Turn this off to create cards only with Tab and Enter.')
-			.addToggle((t) => t.setValue(s.fillNewBoxes).onChange((v) => { s.fillNewBoxes = v; save(); }));
+			.setName('Add boxes with the keyboard')
+			.setDesc('With a box selected, Tab adds a connected box to its right and Enter adds one below it, under the same parent.')
+			.addToggle((t) => t.setValue(s.keyboard).onChange((v) => { s.keyboard = v; save(); }));
+
+		new Setting(containerEl)
+			.setName('Keep tidy in new canvases')
+			.setDesc('Rearrange the boxes as a tree after every change. Canvases that already had boxes when the plugin first opened them start with it off. Each canvas can turn it on or off with the magnet button.')
+			.addToggle((t) => t.setValue(s.keepTidyNew).onChange((v) => { s.keepTidyNew = v; save(); }));
+
+		new Setting(containerEl)
+			.setName('Callout mode')
+			.setDesc('Turned on per canvas with its button in the canvas controls. In callout mode, new boxes start as a foldable callout card.')
+			.setHeading();
 
 		new Setting(containerEl)
 			.setName('Callout type')
 			.setDesc('The type in > [!type]+ at the start of every new card.')
-			.addText((t) => t.setPlaceholder('pregunta').setValue(s.calloutType).onChange((v) => { s.calloutType = v; save(); }));
+			.addText((t) => t.setValue(s.calloutType).onChange((v) => { s.calloutType = v; save(); }));
 
 		new Setting(containerEl)
 			.setName('Question placeholder')
@@ -68,17 +81,5 @@ export class FlashcardCanvasSettingTab extends PluginSettingTab {
 			.setName('New cards start open')
 			.setDesc('On: new cards start with + (answer showing). Off: with - (answer folded).')
 			.addToggle((t) => t.setValue(s.startOpen).onChange((v) => { s.startOpen = v; save(); }));
-
-		new Setting(containerEl).setName('Layout').setHeading();
-
-		new Setting(containerEl)
-			.setName('Tab and Enter add cards')
-			.setDesc('With a card selected, Tab adds a connected card to its right and Enter adds one below it, under the same parent.')
-			.addToggle((t) => t.setValue(s.keyboard).onChange((v) => { s.keyboard = v; save(); }));
-
-		new Setting(containerEl)
-			.setName('Keep tidy by default')
-			.setDesc('Rearrange the cards as a tree after every change. Each canvas can turn it on or off with the magnet button; this sets it for canvases where you haven\'t.')
-			.addToggle((t) => t.setValue(s.keepTidyDefault).onChange((v) => { s.keepTidyDefault = v; save(); }));
 	}
 }

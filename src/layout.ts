@@ -1,9 +1,9 @@
 // Pure layout logic, with no Obsidian imports, so it can be tested with plain Node.
 //
-// The cards and the arrows between them are read as a tree: a card's children
-// are the cards its arrows point to. A card with arrows from two parents is
+// The boxes and the arrows between them are read as a tree: a box's children
+// are the boxes its arrows point to. A box with arrows from two parents is
 // placed under the first one reached (breadth first), and the other arrow is
-// simply drawn across. Cards no arrow reaches are roots.
+// simply drawn across. Boxes no arrow reaches are roots.
 
 export type Side = 'top' | 'right' | 'bottom' | 'left';
 
@@ -13,6 +13,25 @@ export interface Box {
 	y: number;
 	width: number;
 	height: number;
+}
+
+export interface Shape extends Box {
+	group: boolean;
+}
+
+function inside(b: Box, g: Box): boolean {
+	return b.x >= g.x && b.y >= g.y && b.x + b.width <= g.x + g.width && b.y + b.height <= g.y + g.height;
+}
+
+/**
+ * The boxes the layout arranges: everything except groups, and except boxes
+ * that sit entirely inside a group (moving those would take them out of it).
+ */
+export function arrangeable(shapes: Shape[]): Box[] {
+	const groups = shapes.filter((s) => s.group);
+	return shapes
+		.filter((s) => !s.group && !groups.some((g) => inside(s, g)))
+		.map(({ id, x, y, width, height }) => ({ id, x, y, width, height }));
 }
 
 export interface Link {

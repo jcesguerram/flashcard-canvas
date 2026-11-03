@@ -1,12 +1,15 @@
-// Everything the plugin does on one open canvas: marking cards, fitting their
-// height to the content, folding, keeping the layout tidy, adding cards from
-// the keyboard, and study mode.
+// Everything the plugin does on one open canvas.
+//
+// On every canvas: boxes resize to fit their text, Tab and Enter add connected
+// boxes, and Tidy layout / Keep tidy arrange the boxes as a tree.
+// In callout mode (set per canvas): new boxes start as a callout card, clicking
+// a card's title folds it and saves the +/-, and study mode hides the answers.
 
 import { setIcon, setTooltip, type KeymapEventHandler } from 'obsidian';
 import type { CanvasData, CanvasEdgeData, CanvasTextData } from 'obsidian/canvas';
 import { readCard, setFold, toggleFold, type Fold } from './callout';
 import type { CanvasLike, CanvasNodeLike } from './internals';
-import { buildTree, childSpot, GAPS, sidesFor, studyOrder, tidy, type Box, type Link } from './layout';
+import { arrangeable, buildTree, childSpot, GAPS, sidesFor, studyOrder, tidy, type Box, type Link } from './layout';
 import type FlashcardCanvasPlugin from './main';
 
 interface Geometry {
@@ -18,14 +21,16 @@ interface Geometry {
 
 interface Study {
 	revealed: Set<string>;
-	/** Where each card was when study mode started; put back on leaving, and what gets saved meanwhile. */
+	/** Where each box was when study mode started; put back on leaving, and what gets saved meanwhile. */
 	saved: Map<string, Geometry>;
 }
 
-type ButtonKey = 'study' | 'next' | 'collapse' | 'expand' | 'tidy' | 'keep';
+type ButtonKey = 'callouts' | 'study' | 'next' | 'collapse' | 'expand' | 'tidy' | 'keep';
 
-/** The smallest height a card shrinks to. */
+/** The smallest height a box shrinks to. */
 const MIN_HEIGHT = 40;
+/** How long after a change a box keeps following its content's size (it re-renders in steps). */
+const FIT_WINDOW = 1500;
 
 export function randomId(): string {
 	const bytes = new Uint8Array(8);
@@ -37,15 +42,28 @@ function geometry(n: CanvasNodeLike): Geometry {
 	return { x: n.x, y: n.y, width: n.width, height: n.height };
 }
 
-export class CardCanvas {
+function textOf(node: CanvasNodeLike): string | null {
+	const data = node.getData();
+	return data.type === 'text' ? (data.text ?? '') : null;
+}
+
+export class MindmapCanvas {
 	study: Study | null = null;
 	path: string | null;
 
 	private readonly mutations: MutationObserver;
 	private readonly resizes: ResizeObserver;
-	/** The rendered content of each card, watched for size changes. */
+	/** The rendered content of each text box, watched for size changes. */
 	private readonly sizers = new Map<string, Element>();
 	private readonly sizerOwner = new WeakMap<Element, string>();
+	/**
+	 * What each text box's text and width were when last seen. A box is fitted
+	 * only after one of them changes, so opening a canvas never resizes boxes
+	 * you sized by hand.
+	 */
+	private readonly seen = new Map<string, string>();
+	/** Boxes that follow their content's size until the given time. */
+	private readonly fitUntil = new Map<string, number>();
 	private controls: HTMLElement | null = null;
 	private badge: HTMLElement | null = null;
 	private readonly buttons: Partial<Record<ButtonKey, HTMLElement>> = {};
@@ -53,7 +71,7 @@ export class CardCanvas {
 	private tidyTimer: number | null = null;
 	private readonly keyTarget: HTMLElement;
 	private keyHandlers: KeymapEventHandler[] = [];
-	/** Key presses already acted on, so one press never adds two cards. */
+	/** Key presses already acted on, so one press never adds two boxes. */
 	private readonly handledKeys = new WeakSet<KeyboardEvent>();
 	private readonly onClick = (e: MouseEvent) => this.handleClick(e);
 	private readonly onKey = (e: KeyboardEvent) => { this.handleKey(e); };
@@ -65,7 +83,7 @@ export class CardCanvas {
 			for (const entry of entries) {
 				const id = this.sizerOwner.get(entry.target);
 				const node = id ? canvas.nodes.get(id) : undefined;
-				if (node) this.fit(node);
+				if (node) this.follow(node);
 			}
 		});
 		canvas.wrapperEl.addEventListener('click', this.onClick, true);
@@ -80,10 +98,11 @@ export class CardCanvas {
 		this.keyTarget.addEventListener('keydown', this.onKey, true);
 		this.mutations.observe(canvas.canvasEl, { childList: true, subtree: true });
 		this.buildControls();
+		this.loadPrefs();
 		this.scheduleScan(0);
 	}
 
-	/** Stop working on this canvas. `restore` puts cards back where they were before study mode. */
+	/** Stop working on this canvas. `restore` puts boxes back where they were before study mode. */
 	dispose(restore: boolean): void {
 		if (this.study) this.exitStudy(restore);
 		this.canvas.wrapperEl.removeEventListener('click', this.onClick, true);
@@ -96,49 +115,97 @@ export class CardCanvas {
 		if (this.tidyTimer !== null) window.clearTimeout(this.tidyTimer);
 		this.controls?.remove();
 		this.badge?.remove();
+		this.canvas.wrapperEl.removeClass('fc-callouts');
 		for (const node of this.canvas.nodes.values()) node.nodeEl.removeClasses(['fc-card', 'fc-revealed']);
 	}
 
-	/** The canvas view now shows another file: study mode belonged to the old one. */
+	/** The canvas view now shows another file: study mode and what was seen belonged to the old one. */
 	checkFile(): void {
 		const path = this.canvas.view.file?.path ?? null;
 		if (path === this.path) return;
 		if (this.study) this.exitStudy(false);
 		this.path = path;
+		this.seen.clear();
+		this.fitUntil.clear();
+		this.loadPrefs();
+		this.scheduleScan(0);
+	}
+
+	private loadPrefs(): void {
+		const path = this.path;
+		this.updateControls();
+		void this.plugin.ensurePrefs(path).then(() => {
+			if (this.path === path) this.updateControls();
+		});
+	}
+
+	// ── Modes ────────────────────────────────────────────────────────────────
+
+	calloutMode(): boolean {
+		return this.plugin.prefs(this.path).callouts === true;
+	}
+
+	keepTidy(): boolean {
+		return this.plugin.prefs(this.path).keepTidy === true;
+	}
+
+	toggleCalloutMode(): void {
+		if (!this.path) return;
+		if (this.study) this.exitStudy(true);
+		this.plugin.setPref(this.path, 'callouts', !this.calloutMode());
 		this.updateControls();
 		this.scheduleScan(0);
 	}
 
-	// ── Cards ────────────────────────────────────────────────────────────────
+	toggleKeepTidy(): void {
+		if (!this.path) return;
+		const on = !this.keepTidy();
+		this.plugin.setPref(this.path, 'keepTidy', on);
+		this.updateControls();
+		if (on) this.tidyNow(true);
+	}
 
+	// ── Boxes ────────────────────────────────────────────────────────────────
+
+	/** A callout card: a text box starting with a foldable callout, on a canvas in callout mode. */
 	isCard(node: CanvasNodeLike): boolean {
-		const data = node.getData();
-		return data.type === 'text' && readCard((data).text) !== null;
+		if (!this.calloutMode()) return false;
+		const text = textOf(node);
+		return text !== null && readCard(text) !== null;
 	}
 
 	cards(): CanvasNodeLike[] {
 		return Array.from(this.canvas.nodes.values()).filter((n) => this.isCard(n));
 	}
 
-	/** Arrows between two cards. Arrows to or from anything else are ignored. */
-	links(): Link[] {
+	/** The boxes the layout arranges: all but groups and what sits inside a group. */
+	private arranged(): CanvasNodeLike[] {
+		const all = Array.from(this.canvas.nodes.values());
+		const ids = new Set(arrangeable(all.map((n) => ({ id: n.id, ...geometry(n), group: n.getData().type === 'group' }))).map((b) => b.id));
+		return all.filter((n) => ids.has(n.id));
+	}
+
+	/** Arrows between two of the given boxes. */
+	private links(nodes: CanvasNodeLike[]): Link[] {
+		const ids = new Set(nodes.map((n) => n.id));
 		const out: Link[] = [];
 		for (const e of this.canvas.edges.values()) {
-			const a = e.from?.node, b = e.to?.node;
-			if (a && b && this.isCard(a) && this.isCard(b)) out.push({ from: a.id, to: b.id });
+			const a = e.from?.node?.id, b = e.to?.node?.id;
+			if (a && b && ids.has(a) && ids.has(b)) out.push({ from: a, to: b });
 		}
 		return out;
 	}
 
-	private boxes(nodes = this.cards()): Box[] {
+	private boxes(nodes: CanvasNodeLike[]): Box[] {
 		return nodes.map((n) => ({ id: n.id, ...geometry(n) }));
 	}
 
-	selectedCard(): CanvasNodeLike | null {
+	/** The one selected box Tab and Enter work from: any box but a group, not being edited. */
+	selectedBox(): CanvasNodeLike | null {
 		if (this.canvas.selection.size !== 1) return null;
 		const item = this.canvas.selection.values().next().value as CanvasNodeLike | undefined;
 		if (!item || this.canvas.nodes.get(item.id) !== item) return null;
-		if (item.isEditing || !this.isCard(item)) return null;
+		if (item.isEditing || item.getData().type === 'group') return null;
 		return item;
 	}
 
@@ -175,23 +242,22 @@ export class CardCanvas {
 		}, delay);
 	}
 
-	/** Mark the cards, watch their content and fit them. Runs whenever the canvas's content changes. */
+	/** Mark the cards and watch the text boxes. Runs whenever the canvas's content changes. */
 	private scan(): void {
-		let count = 0;
+		this.canvas.wrapperEl.toggleClass('fc-callouts', this.calloutMode());
 		for (const node of this.canvas.nodes.values()) {
 			const card = this.isCard(node);
 			node.nodeEl.toggleClass('fc-card', card);
 			node.nodeEl.toggleClass('fc-revealed', card && !!this.study?.revealed.has(node.id));
-			if (!card) {
+			if (textOf(node) === null) {
 				this.unwatch(node.id);
 				continue;
 			}
-			count++;
 			this.watch(node);
-			this.fit(node);
+			this.follow(node);
 		}
 		for (const id of Array.from(this.sizers.keys())) if (!this.canvas.nodes.has(id)) this.unwatch(id);
-		this.controls?.toggleClass('fc-hidden', count === 0 && !this.study);
+		for (const id of Array.from(this.seen.keys())) if (!this.canvas.nodes.has(id)) this.seen.delete(id);
 		this.updateControls();
 	}
 
@@ -217,9 +283,27 @@ export class CardCanvas {
 		this.sizers.delete(id);
 	}
 
-	/** Make a card exactly as tall as what it shows. */
-	fit(node: CanvasNodeLike): void {
-		if (node.isEditing || this.canvas.readonly || !this.isCard(node)) return;
+	/** Have a box follow its content's size for a moment, e.g. right after it's created. */
+	touch(id: string): void {
+		this.fitUntil.set(id, Date.now() + FIT_WINDOW);
+		this.scheduleScan(30);
+	}
+
+	/** Fit a text box if its text or width changed since it was last seen, or it is a card in study mode. */
+	private follow(node: CanvasNodeLike): void {
+		const text = textOf(node);
+		if (text === null || node.isEditing) return;
+		const key = Math.round(node.width) + '\u0000' + text;
+		const before = this.seen.get(node.id);
+		this.seen.set(node.id, key);
+		if (before !== undefined && before !== key) this.fitUntil.set(node.id, Date.now() + FIT_WINDOW);
+		const following = (this.fitUntil.get(node.id) ?? 0) > Date.now();
+		if (following || (this.study && this.isCard(node))) this.fit(node);
+	}
+
+	/** Make a text box exactly as tall as what it shows. */
+	private fit(node: CanvasNodeLike): void {
+		if (node.isEditing || this.canvas.readonly) return;
 		const view = node.nodeEl.querySelector<HTMLElement>('.markdown-preview-view');
 		if (!view) return;
 		view.setCssStyles({ height: 'min-content' });
@@ -268,7 +352,7 @@ export class CardCanvas {
 				used = true;
 			}
 		} else if (this.plugin.settings.keyboard && !this.canvas.readonly && (e.key === 'Tab' || e.key === 'Enter')) {
-			const node = this.selectedCard();
+			const node = this.selectedBox();
 			if (node) {
 				if (e.key === 'Tab') this.addChild(node);
 				else this.addSibling(node);
@@ -282,7 +366,7 @@ export class CardCanvas {
 		return true;
 	}
 
-	// ── Folding ──────────────────────────────────────────────────────────────
+	// ── Folding (callout mode) ───────────────────────────────────────────────
 
 	toggleFold(node: CanvasNodeLike): void {
 		const data = node.getData() as CanvasTextData;
@@ -312,17 +396,6 @@ export class CardCanvas {
 
 	// ── Layout ───────────────────────────────────────────────────────────────
 
-	keepTidy(): boolean {
-		return this.plugin.keepTidyFor(this.path);
-	}
-
-	toggleKeepTidy(): void {
-		const on = !this.keepTidy();
-		this.plugin.setKeepTidy(this.path, on);
-		this.updateControls();
-		if (on) this.tidyNow(true);
-	}
-
 	/** Called on every save of the canvas: with Keep tidy on, rearrange shortly after. */
 	scheduleTidy(): void {
 		if (!this.keepTidy()) return;
@@ -333,17 +406,17 @@ export class CardCanvas {
 		}, 200);
 	}
 
-	/** Arrange the cards as a tree. Automatic runs wait until nothing is being dragged or edited. */
+	/** Arrange the boxes as a tree. Automatic runs wait until nothing is being dragged or edited. */
 	tidyNow(manual: boolean): void {
 		if (this.canvas.readonly) return;
 		if (!manual && (this.canvas.isDragging || this.anyEditing())) {
 			this.scheduleTidy();
 			return;
 		}
-		const nodes = this.cards();
+		const nodes = this.arranged();
 		if (!nodes.length) return;
 		const boxes = this.boxes(nodes);
-		const links = this.links();
+		const links = this.links(nodes);
 		const spots = tidy(boxes, links);
 		let changed = false;
 		for (const node of nodes) {
@@ -352,7 +425,7 @@ export class CardCanvas {
 			this.setGeometry(node, { x: p.x, y: p.y });
 			changed = true;
 		}
-		// Arrows from a card to its children leave from the right and arrive on the left.
+		// Arrows from a box to its children leave from the right and arrive on the left.
 		const tree = buildTree(boxes, links);
 		const moved = new Map(boxes.map((b) => [b.id, { ...b, ...(spots.get(b.id) ?? {}) }]));
 		for (const edge of this.canvas.edges.values()) {
@@ -371,38 +444,40 @@ export class CardCanvas {
 		this.canvas.requestSave();
 	}
 
-	// ── Adding cards ─────────────────────────────────────────────────────────
+	// ── Adding boxes ─────────────────────────────────────────────────────────
 
 	addChild(parent: CanvasNodeLike): void {
 		const children: CanvasNodeLike[] = [];
 		for (const edge of this.canvas.edges.values()) {
 			const to = edge.to?.node;
-			if (edge.from?.node === parent && to && this.isCard(to)) children.push(to);
+			if (edge.from?.node === parent && to && to.getData().type !== 'group') children.push(to);
 		}
 		const spot = childSpot(geometry(parent), children.map(geometry));
-		this.createCard(spot, parent.width, parent.id);
+		this.createBox(spot, parent.width, parent.id);
 	}
 
 	addSibling(node: CanvasNodeLike): void {
-		const parentId = buildTree(this.boxes(), this.links()).parent.get(node.id);
+		const nodes = this.arranged();
+		const parentId = buildTree(this.boxes(nodes), this.links(nodes)).parent.get(node.id);
 		const below = node.y + node.height;
-		// Just above where the next sibling sits, so the layout keeps the new card right after this one.
-		if (parentId) this.createCard({ x: node.x, y: below + GAPS.row - 1 }, node.width, parentId);
-		else this.createCard({ x: node.x, y: below + GAPS.root }, node.width, null);
+		// Just above where the next sibling sits, so the layout keeps the new box right after this one.
+		if (parentId) this.createBox({ x: node.x, y: below + GAPS.row - 1 }, node.width, parentId);
+		else this.createBox({ x: node.x, y: below + GAPS.root }, node.width, null);
 	}
 
-	private createCard(spot: { x: number; y: number }, width: number, parentId: string | null): void {
+	private createBox(spot: { x: number; y: number }, width: number, parentId: string | null): void {
 		if (this.study || this.canvas.readonly) return;
+		const callouts = this.calloutMode();
 		const id = randomId();
 		const data = this.canvas.getData();
 		const node: CanvasTextData = {
 			id,
 			type: 'text',
-			text: this.plugin.template(),
+			text: callouts ? this.plugin.template() : '',
 			x: Math.round(spot.x),
 			y: Math.round(spot.y),
 			width: Math.round(width),
-			height: 100,
+			height: callouts ? 100 : 60,
 		};
 		const edges: CanvasEdgeData[] = parentId
 			? [...data.edges, { id: randomId(), fromNode: parentId, fromSide: 'right', toNode: id, toSide: 'left' }]
@@ -411,12 +486,14 @@ export class CardCanvas {
 		this.canvas.requestFrame?.();
 		const created = this.canvas.nodes.get(id);
 		if (!created) return;
+		this.touch(id);
 		if (this.keepTidy()) this.tidyNow(true);
 		this.recordHistory();
 		this.canvas.requestSave();
 		this.canvas.selectOnly?.(created);
 		this.revealIfHidden(created);
-		this.plugin.editTitle(created);
+		if (callouts) this.plugin.editTitle(created);
+		else created.startEditing?.();
 	}
 
 	private revealIfHidden(node: CanvasNodeLike): void {
@@ -426,7 +503,7 @@ export class CardCanvas {
 		if (!inside) this.canvas.zoomToSelection?.();
 	}
 
-	// ── Study mode ───────────────────────────────────────────────────────────
+	// ── Study mode (callout mode) ────────────────────────────────────────────
 
 	toggleStudy(): void {
 		if (this.study) this.exitStudy(true);
@@ -434,9 +511,10 @@ export class CardCanvas {
 	}
 
 	enterStudy(): void {
-		if (this.study) return;
+		if (this.study || !this.calloutMode()) return;
+		// Every box may move while studying (cards shrink, Keep tidy reflows), so remember them all.
 		const saved = new Map<string, Geometry>();
-		for (const node of this.cards()) saved.set(node.id, geometry(node));
+		for (const node of this.canvas.nodes.values()) saved.set(node.id, geometry(node));
 		this.study = { revealed: new Set(), saved };
 		this.canvas.wrapperEl.addClass('fc-study');
 		this.badge = this.canvas.wrapperEl.createDiv({ cls: 'fc-study-badge' });
@@ -472,11 +550,17 @@ export class CardCanvas {
 		this.updateControls();
 	}
 
-	/** Reveal the next hidden card, following the arrows from the first card. */
+	/** Reveal the next hidden card, following the arrows from the first box. */
 	nextCard(): void {
 		const study = this.study;
 		if (!study) return;
-		const id = studyOrder(this.boxes(), this.links()).find((i) => !study.revealed.has(i));
+		const cards = this.cards();
+		const isCard = new Set(cards.map((c) => c.id));
+		const nodes = this.arranged();
+		const order = studyOrder(this.boxes(nodes), this.links(nodes)).filter((i) => isCard.has(i));
+		// Cards the layout leaves alone (inside groups) come last, top to bottom.
+		const rest = cards.filter((c) => !order.includes(c.id)).sort((a, b) => a.y - b.y || a.x - b.x).map((c) => c.id);
+		const id = [...order, ...rest].find((i) => !study.revealed.has(i));
 		const node = id ? this.canvas.nodes.get(id) : undefined;
 		if (!node) return;
 		study.revealed.add(node.id);
@@ -504,7 +588,7 @@ export class CardCanvas {
 	private buildControls(): void {
 		const host = this.canvas.canvasControlsEl;
 		if (!host) return;
-		const group = host.createDiv({ cls: 'canvas-control-group fc-controls fc-hidden' });
+		const group = host.createDiv({ cls: 'canvas-control-group fc-controls' });
 		const add = (key: ButtonKey, icon: string, label: string, run: () => void) => {
 			const button = group.createDiv({ cls: 'canvas-control-item' });
 			setIcon(button, icon);
@@ -512,25 +596,36 @@ export class CardCanvas {
 			button.addEventListener('click', run);
 			this.buttons[key] = button;
 		};
-		add('study', 'graduation-cap', 'Study mode', () => this.toggleStudy());
-		add('next', 'skip-forward', 'Next card (N)', () => this.nextCard());
-		add('collapse', 'chevrons-down-up', 'Fold all cards', () => this.setAllFolds('-'));
-		add('expand', 'chevrons-up-down', 'Unfold all cards', () => this.setAllFolds('+'));
 		add('tidy', 'network', 'Tidy layout', () => this.tidyNow(true));
 		add('keep', 'magnet', 'Keep tidy', () => this.toggleKeepTidy());
+		add('callouts', 'square-chevron-down', 'Callout mode', () => this.toggleCalloutMode());
+		add('collapse', 'chevrons-down-up', 'Fold all cards', () => this.setAllFolds('-'));
+		add('expand', 'chevrons-up-down', 'Unfold all cards', () => this.setAllFolds('+'));
+		add('study', 'graduation-cap', 'Study mode', () => this.toggleStudy());
+		add('next', 'skip-forward', 'Next card (N)', () => this.nextCard());
 		this.controls = group;
 	}
 
 	updateControls(): void {
 		const b = this.buttons;
 		const studying = !!this.study;
-		b.study?.toggleClass('is-active', studying);
-		if (b.study) setTooltip(b.study, studying ? 'Leave study mode' : 'Study mode', { placement: 'left' });
-		for (const key of ['collapse', 'expand', 'tidy', 'keep'] as const) b[key]?.toggleClass('fc-hidden', studying);
-		b.next?.toggleClass('fc-hidden', !studying);
+		const callouts = this.calloutMode();
+		const tip = (el: HTMLElement | undefined, text: string) => { if (el) setTooltip(el, text, { placement: 'left' }); };
+
+		b.callouts?.toggleClass('is-active', callouts);
+		tip(b.callouts, callouts ? 'Callout mode: on' : 'Callout mode: off');
 		const keep = this.keepTidy();
 		b.keep?.toggleClass('is-active', keep);
-		if (b.keep) setTooltip(b.keep, keep ? 'Keep tidy: on' : 'Keep tidy: off', { placement: 'left' });
+		tip(b.keep, keep ? 'Keep tidy: on' : 'Keep tidy: off');
+		b.study?.toggleClass('is-active', studying);
+		tip(b.study, studying ? 'Leave study mode' : 'Study mode');
+
+		// While studying only study mode's own buttons show; the callout buttons only in callout mode.
+		for (const key of ['tidy', 'keep', 'callouts'] as const) b[key]?.toggleClass('fc-hidden', studying);
+		for (const key of ['collapse', 'expand'] as const) b[key]?.toggleClass('fc-hidden', studying || !callouts);
+		b.study?.toggleClass('fc-hidden', !callouts);
+		b.next?.toggleClass('fc-hidden', !studying);
+
 		if (this.study && this.badge) {
 			const total = this.cards().length;
 			const shown = Array.from(this.study.revealed).filter((id) => this.canvas.nodes.has(id)).length;
