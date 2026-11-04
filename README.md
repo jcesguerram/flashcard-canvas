@@ -126,9 +126,13 @@ The callout type has no special look unless your theme or a CSS snippet gives it
 
 ## Installation
 
-Not in Obsidian's community plugins yet. Build it (below), then copy `main.js`, `manifest.json` and `styles.css` into `<vault>/.obsidian/plugins/flashcard-canvas/` and enable **Flashcard Canvas** in Settings → Community plugins.
+From Obsidian: Settings → Community plugins → Browse, search for **Flashcard Canvas**, install it, then enable it.
+
+Manually: download `main.js`, `manifest.json` and `styles.css` from the [latest release](../../releases/latest) into `<vault>/.obsidian/plugins/flashcard-canvas/`, then enable **Flashcard Canvas** in Settings → Community plugins.
 
 It requires Obsidian 1.7.2 or later. It makes no network requests.
+
+If you also use another plugin that makes the canvas work like a mindmap or resizes canvas boxes (Canvas Mindmap, Node Auto Resize, the auto-resize option of Advanced Canvas), turn it off: two plugins handling Tab and Enter, or both resizing boxes, get in each other's way. After turning one off, restart Obsidian, since some of them stay attached to canvases that are already open.
 
 ## How it works
 
@@ -155,7 +159,7 @@ npm run lint    # ESLint with Obsidian's plugin rules
 npm test        # unit tests for src/callout.ts and src/layout.ts
 ```
 
-To release, bump the version (`npm version patch`, or `minor` / `major`) and push with `git push --follow-tags`. The release workflow builds the plugin and attaches `main.js`, `manifest.json` and `styles.css` to a draft release.
+To release, bump the version (`npm version patch`, or `minor` / `major`) and push with `git push --follow-tags`. The release workflow builds the plugin and attaches `main.js`, `manifest.json` and `styles.css` to a draft release; publish it from the repository's Releases page. Obsidian reviews each new release automatically.
 
 ## License
 

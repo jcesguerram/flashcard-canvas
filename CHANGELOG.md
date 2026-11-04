@@ -2,6 +2,14 @@
 
 All notable changes to Flashcard Canvas are recorded here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## 1.0.0 — 2026-11-04
+
+First public release. The same as 0.3.0:
+
+- **On every canvas:** text boxes fit their text, Tab and Enter add connected child and sibling boxes, and Tidy layout and Keep tidy arrange the boxes as a tree along the arrows. Groups and what's inside them stay where they are.
+- **Colors follow the tree:** new boxes take the color of the box they come from, arrows the color of the box they leave from, and recoloring a box recolors the boxes below it.
+- **Callout mode, per canvas:** new boxes start as a foldable callout card, clicking a title folds it, fold all and unfold all, and study mode hides the answers without changing the file.
+
 ## 0.3.0 — 2026-11-04
 
 ### New
