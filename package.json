@@ -1,6 +1,6 @@
 {
 	"name": "flashcard-canvas",
-	"version": "0.2.0",
+	"version": "0.3.0",
 	"description": "Mindmaps on the Obsidian canvas, with an optional mode of foldable callout flashcards and a study mode.",
 	"main": "main.js",
 	"type": "module",

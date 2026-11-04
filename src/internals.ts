@@ -23,6 +23,7 @@ export interface CanvasNodeLike {
 	getData(): AllCanvasNodeData;
 	setData(data: AllCanvasNodeData): void;
 	startEditing?(): void;
+	setColor?(color: string, ...rest: unknown[]): void;
 	child?: { editMode?: { cm?: CodeMirrorLike } };
 }
 

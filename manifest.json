@@ -1,7 +1,7 @@
 {
 	"id": "flashcard-canvas",
 	"name": "Flashcard Canvas",
-	"version": "0.2.0",
+	"version": "0.3.0",
 	"minAppVersion": "1.7.2",
 	"description": "Mindmaps on the canvas: boxes fit their text, Tab and Enter add connected boxes, and the map keeps itself tidy. Callout mode turns boxes into foldable flashcards with a study mode.",
 	"author": "Juan Carlos Esguerra",

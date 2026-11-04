@@ -138,6 +138,19 @@ export function tidy(boxes: Box[], links: Link[], gaps: Gaps = GAPS): Map<string
 	return result;
 }
 
+/** Every box below `id` in the tree: its children, their children, and so on. */
+export function descendants(boxes: Box[], links: Link[], id: string): string[] {
+	const { kids } = buildTree(boxes, links);
+	const out: string[] = [];
+	const queue = [...(kids.get(id) ?? [])];
+	while (queue.length) {
+		const c = queue.shift() as string;
+		out.push(c);
+		queue.push(...(kids.get(c) ?? []));
+	}
+	return out;
+}
+
 /** The order study mode walks the cards in: tree by tree, level by level, top to bottom. */
 export function studyOrder(boxes: Box[], links: Link[]): string[] {
 	const { kids, roots } = buildTree(boxes, links);

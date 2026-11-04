@@ -88,9 +88,13 @@ Click a card's title to fold or unfold it. The `+`/`-` in the card's text change
 
 Study mode doesn't change the file. Cards shrink while their answers are hidden (and the map reflows if Keep tidy is on), but the canvas keeps saving the layout from before study mode, and leaving study mode puts every box back where it was. Folding, Tab and Enter, and the layout buttons are off while studying.
 
-### Colors
+## Colors
 
-Box colors work as usual: the canvas colors the box's border and background, and the callout keeps its own color.
+Box colors work as usual: the canvas colors the box's border and background, and in callout mode the callout keeps its own color. On top of that:
+
+- **New boxes take the color of the box they come from.** Tab gives the child its parent's color; Enter gives the sibling the color of the box you pressed it on.
+- **Arrows take the color of the box they leave from.**
+- **Recoloring a box recolors the boxes below it in the tree**, and the arrows leaving them. Only the tree counts: a box reached by a second arrow (one drawn across, see *Layout*) keeps its color. Boxes that aren't connected aren't touched. After that, you can still give any box below its own color.
 
 ## Commands
 

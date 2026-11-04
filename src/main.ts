@@ -14,8 +14,11 @@ export default class FlashcardCanvasPlugin extends Plugin {
 	settings: Settings = { ...DEFAULT_SETTINGS, canvases: {} };
 	private readonly boards = new Map<CanvasLike, MindmapCanvas>();
 	private patched = false;
+	private nodesPatched = false;
 	/** Above zero while canvas content is being loaded, so loaded boxes aren't treated as new. */
 	private importing = 0;
+	/** Above zero while the plugin is spreading a color, so its own changes don't spread again. */
+	private coloring = 0;
 
 	async onload(): Promise<void> {
 		await this.loadSettings();
@@ -125,6 +128,44 @@ export default class FlashcardCanvasPlugin extends Plugin {
 			};
 		}
 		this.register(around(proto as Record<string, Method>, wrappers));
+	}
+
+	/**
+	 * Hook into the boxes once: when a box's color changes from the canvas's
+	 * color menu, the boxes below it follow. Changes made while loading a canvas,
+	 * or by the plugin itself, don't spread.
+	 */
+	patchNodes(node: CanvasNodeLike): void {
+		if (this.nodesPatched) return;
+		// The method lives on a shared base class of text, note, link and group boxes.
+		let proto = Object.getPrototypeOf(node) as Record<string, unknown> | null;
+		while (proto && !Object.prototype.hasOwnProperty.call(proto, 'setColor')) proto = Object.getPrototypeOf(proto) as Record<string, unknown> | null;
+		if (!proto || typeof proto.setColor !== 'function') return;
+		this.nodesPatched = true;
+		// eslint-disable-next-line @typescript-eslint/no-this-alias -- the patched method needs both the box (this) and the plugin
+		const plugin = this;
+		type SetColor = (this: CanvasNodeLike, ...args: unknown[]) => unknown;
+		this.register(around(proto as Record<string, SetColor>, {
+			setColor: (next: SetColor) => function (this: CanvasNodeLike, ...args: unknown[]) {
+				const before = this.getData?.().color ?? '';
+				const result = next.apply(this, args);
+				const after = this.getData?.().color ?? '';
+				if (before !== after && plugin.importing === 0 && plugin.coloring === 0) {
+					const board = plugin.boards.get(this.canvas);
+					if (board) plugin.whileColoring(() => board.colorChanged(this));
+				}
+				return result;
+			},
+		}));
+	}
+
+	whileColoring<T>(run: () => T): T {
+		this.coloring++;
+		try {
+			return run();
+		} finally {
+			this.coloring--;
+		}
 	}
 
 	whileImporting<T>(run: () => T): T {

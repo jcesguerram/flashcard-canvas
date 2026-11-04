@@ -2,6 +2,12 @@
 
 All notable changes to Flashcard Canvas are recorded here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## 0.3.0 — 2026-11-04
+
+### New
+
+- **Colors follow the tree.** A box added with Tab takes its parent's color, and one added with Enter the color of the box you pressed it on. Arrows take the color of the box they leave from. Recoloring a box from the canvas's color menu recolors the boxes below it in the tree, and their arrows.
+
 ## 0.2.0 — 2026-11-03
 
 A general mindmap plugin now, with callouts as a mode.

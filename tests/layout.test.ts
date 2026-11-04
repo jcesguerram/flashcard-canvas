@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { arrangeable, buildTree, childSpot, GAPS, sidesFor, studyOrder, tidy, type Box, type Link } from '../src/layout';
+import { arrangeable, buildTree, childSpot, descendants, GAPS, sidesFor, studyOrder, tidy, type Box, type Link } from '../src/layout';
 
 let failed = 0;
 function test(name: string, fn: () => void) {
@@ -89,6 +89,16 @@ test('a new child goes right of its parent, or below its last child', () => {
 	const parent = box('p', 0, 0, 60);
 	assert.deepEqual(childSpot(parent, []), { x: 260 + GAPS.col, y: 0 });
 	assert.deepEqual(childSpot(parent, [box('a', 340, -40, 50), box('b', 340, 30, 70)]), { x: 340, y: 30 + 70 + GAPS.row });
+});
+
+test('the boxes below a box follow the tree, not cross arrows', () => {
+	// r → b → b1, r → a → a1, plus a cross arrow a → b1. b is above a, so b1 is placed under b.
+	const boxes = [box('r', 0, 0), box('b', 400, 0), box('a', 400, 200), box('b1', 800, 0), box('a1', 800, 200)];
+	const links = [link('r', 'a'), link('r', 'b'), link('a', 'a1'), link('b', 'b1'), link('a', 'b1')];
+	assert.deepEqual(descendants(boxes, links, 'r'), ['b', 'a', 'b1', 'a1']);
+	assert.deepEqual(descendants(boxes, links, 'a'), ['a1']);
+	assert.deepEqual(descendants(boxes, links, 'b'), ['b1']);
+	assert.deepEqual(descendants(boxes, links, 'a1'), []);
 });
 
 test('groups, and boxes entirely inside a group, are left out of the layout', () => {

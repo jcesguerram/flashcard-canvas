@@ -9,7 +9,7 @@ import { setIcon, setTooltip, type KeymapEventHandler } from 'obsidian';
 import type { CanvasData, CanvasEdgeData, CanvasTextData } from 'obsidian/canvas';
 import { readCard, setFold, toggleFold, type Fold } from './callout';
 import type { CanvasLike, CanvasNodeLike } from './internals';
-import { arrangeable, buildTree, childSpot, GAPS, sidesFor, studyOrder, tidy, type Box, type Link } from './layout';
+import { arrangeable, buildTree, childSpot, descendants, GAPS, sidesFor, studyOrder, tidy, type Box, type Link } from './layout';
 import type FlashcardCanvasPlugin from './main';
 
 interface Geometry {
@@ -246,6 +246,7 @@ export class MindmapCanvas {
 	private scan(): void {
 		this.canvas.wrapperEl.toggleClass('fc-callouts', this.calloutMode());
 		for (const node of this.canvas.nodes.values()) {
+			this.plugin.patchNodes(node);
 			const card = this.isCard(node);
 			node.nodeEl.toggleClass('fc-card', card);
 			node.nodeEl.toggleClass('fc-revealed', card && !!this.study?.revealed.has(node.id));
@@ -446,6 +447,7 @@ export class MindmapCanvas {
 
 	// ── Adding boxes ─────────────────────────────────────────────────────────
 
+	/** A new child takes its parent's color. */
 	addChild(parent: CanvasNodeLike): void {
 		const children: CanvasNodeLike[] = [];
 		for (const edge of this.canvas.edges.values()) {
@@ -453,19 +455,21 @@ export class MindmapCanvas {
 			if (edge.from?.node === parent && to && to.getData().type !== 'group') children.push(to);
 		}
 		const spot = childSpot(geometry(parent), children.map(geometry));
-		this.createBox(spot, parent.width, parent.id);
+		this.createBox(spot, parent.width, parent.id, parent.getData().color);
 	}
 
+	/** A new sibling takes the color of the box Enter was pressed on. */
 	addSibling(node: CanvasNodeLike): void {
 		const nodes = this.arranged();
 		const parentId = buildTree(this.boxes(nodes), this.links(nodes)).parent.get(node.id);
 		const below = node.y + node.height;
+		const color = node.getData().color;
 		// Just above where the next sibling sits, so the layout keeps the new box right after this one.
-		if (parentId) this.createBox({ x: node.x, y: below + GAPS.row - 1 }, node.width, parentId);
-		else this.createBox({ x: node.x, y: below + GAPS.root }, node.width, null);
+		if (parentId) this.createBox({ x: node.x, y: below + GAPS.row - 1 }, node.width, parentId, color);
+		else this.createBox({ x: node.x, y: below + GAPS.root }, node.width, null, color);
 	}
 
-	private createBox(spot: { x: number; y: number }, width: number, parentId: string | null): void {
+	private createBox(spot: { x: number; y: number }, width: number, parentId: string | null, color?: string): void {
 		if (this.study || this.canvas.readonly) return;
 		const callouts = this.calloutMode();
 		const id = randomId();
@@ -479,9 +483,12 @@ export class MindmapCanvas {
 			width: Math.round(width),
 			height: callouts ? 100 : 60,
 		};
-		const edges: CanvasEdgeData[] = parentId
-			? [...data.edges, { id: randomId(), fromNode: parentId, fromSide: 'right', toNode: id, toSide: 'left' }]
-			: data.edges;
+		if (color) node.color = color;
+		// The arrow takes the color of the box it leaves from.
+		const parentColor = parentId ? this.canvas.nodes.get(parentId)?.getData().color : undefined;
+		const arrow: CanvasEdgeData = { id: randomId(), fromNode: parentId ?? '', fromSide: 'right', toNode: id, toSide: 'left' };
+		if (parentColor) arrow.color = parentColor;
+		const edges: CanvasEdgeData[] = parentId ? [...data.edges, arrow] : data.edges;
 		this.plugin.whileImporting(() => this.canvas.importData({ nodes: [...data.nodes, node], edges }));
 		this.canvas.requestFrame?.();
 		const created = this.canvas.nodes.get(id);
@@ -494,6 +501,46 @@ export class MindmapCanvas {
 		this.revealIfHidden(created);
 		if (callouts) this.plugin.editTitle(created);
 		else created.startEditing?.();
+	}
+
+	// ── Colors ───────────────────────────────────────────────────────────────
+
+	/**
+	 * A box's color was changed from the canvas's color menu: the boxes below
+	 * it in the tree take the same color, and the arrows leaving each of them
+	 * too. Color is left alone on boxes that aren't connected to it.
+	 */
+	colorChanged(node: CanvasNodeLike): void {
+		if (this.study || this.canvas.readonly) return;
+		const color = node.getData().color;
+		const all = Array.from(this.canvas.nodes.values()).filter((n) => n.getData().type !== 'group');
+		if (!all.includes(node)) return;
+		const ids = new Set([node.id, ...descendants(this.boxes(all), this.links(all), node.id)]);
+		let changed = false;
+		for (const id of ids) {
+			const n = this.canvas.nodes.get(id);
+			if (!n || n === node) continue;
+			const data = n.getData();
+			if ((data.color ?? '') === (color ?? '')) continue;
+			const next = { ...data, color };
+			if (!color) delete next.color;
+			n.setData(next);
+			changed = true;
+		}
+		for (const edge of this.canvas.edges.values()) {
+			const from = edge.from?.node?.id;
+			if (!from || !ids.has(from)) continue;
+			const data = edge.getData();
+			if ((data.color ?? '') === (color ?? '')) continue;
+			const next = { ...data, color };
+			if (!color) delete next.color;
+			edge.setData(next);
+			edge.render?.();
+			changed = true;
+		}
+		if (!changed) return;
+		this.recordHistory();
+		this.canvas.requestSave();
 	}
 
 	private revealIfHidden(node: CanvasNodeLike): void {
